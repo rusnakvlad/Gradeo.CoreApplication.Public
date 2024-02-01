@@ -1,0 +1,84 @@
+# Docker
+# Build a Docker image
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger:
+- master
+
+resources:
+- repo: self
+variables:
+  buildConfiguration: 'Release'
+  buildId: '$(Build.BuildId)'
+  imageVersionIdentifier: '-dev'
+  infrastructureProject: '$(Build.SourcesDirectory)/src/Gradeo.CoreApplication.Infrastructure/Gradeo.CoreApplication.Infrastructure.csproj'
+  applicationProject: '$(Build.SourcesDirectory)/src/Gradeo.CoreApplication.WebAPI/Gradeo.CoreApplication.WebAPI.csproj'
+
+stages:
+- stage: Build
+  displayName: Build image and publish artifact
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: DotNetCoreCLI@2
+      displayName: install manifests for EF tools
+      inputs:
+        command: 'custom'
+        custom: 'new'
+        arguments: 'tool-manifest'
+
+    - task: DotNetCoreCLI@2
+      displayName: Install EF Tool
+      inputs:
+        command: custom
+        custom: 'tool '
+        arguments: install dotnet-ef
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore NuGet Packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+
+    # - task: DotNetCoreCLI@2
+    #   displayName: 'dotnet build'
+    #   inputs:
+    #     command: 'build'
+    #     projects: '**/*.csproj'
+    
+    - script: dotnet build --configuration $(buildConfiguration)
+      displayName: 'dotnet build $(buildConfiguration)'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'dotnet publish'
+      inputs:
+        command: publish
+        publishWebProjects: false
+        projects: 'src/Gradeo.CoreApplication.WebAPI/Gradeo.CoreApplication.WebAPI.csproj'
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/CoreApplication'
+        zipAfterPublish: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Generate Application DB migration'
+      inputs:
+        command: custom
+        custom: 'ef '
+        arguments: migrations script --output $(Build.ArtifactStagingDirectory)/SQL/Application_migration.sql --idempotent --project $(infrastructureProject) --startup-project $(applicationProject) --context ApplicationDbContext
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish SQL Migration'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/SQL/'
+        ArtifactName: 'SQL'
+        publishLocation: 'Container'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Application as zip'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/CoreApplication/'
+        ArtifactName: 'CoreApplication'
+        publishLocation: 'Container'
+
